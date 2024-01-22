@@ -6,15 +6,15 @@ import scipy.sparse as sp
 from scipy.spatial import cKDTree
 
 
-def import_class(name):
-    try:
-        components = name.split('.')
-        module = __import__(components[0])
-        for c in components[1:]:
-            module = getattr(module, c)
-    except AttributeError:
-        module = None
-    return module
+# def import_class(name):
+#     try:
+#         components = name.split('.')
+#         module = __import__(components[0])
+#         for c in components[1:]:
+#             module = getattr(module, c)
+#     except AttributeError:
+#         module = None
+#     return module
 
 
 def load_h5(file_name):

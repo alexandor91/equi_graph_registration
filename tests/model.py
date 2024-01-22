@@ -1,9 +1,10 @@
-
 import torch
 from torch import nn
 import torch.optim as optim
 # from egnn_pytorch import EGNN
 # from se3_transformer_pytorch import SE3Transformer
+import egcnModel
+from gcnLayer import GraphConvolution, GlobalPooling
 from se3_transformer_pytorch.se3_transformer_pytorch import SE3Transformer
 from se3_transformer_pytorch.irr_repr import rot
 from se3_transformer_pytorch.utils import torch_default_dtype, fourier_encode
@@ -12,8 +13,8 @@ import numpy as np
 import wandb
 import json
 #from sklearn.neighbors import NearestNeighbors
-from datasets import TUMDataset
-
+#from datasets import TUMDataset
+from customDatasets import Match3DDataset
 torch.cuda.manual_seed(2)
 torch.set_default_dtype(torch.float64) # works best in float64
 
@@ -265,7 +266,7 @@ class E_GCL(nn.Module):
         return h, coord, edge_attr
 
 
-class EGNN(nn.Module):
+class EGNN(nn.Module): ######This is the whole modle##########
     def __init__(self, in_node_nf, hidden_nf, out_node_nf, in_edge_nf=0, device='cuda:0', act_fn=nn.SiLU(), n_layers=1, residual=True, attention=False, normalize=False, tanh=False):
         '''
 
@@ -288,6 +289,8 @@ class EGNN(nn.Module):
                         We didn't use it in our paper.
         '''
         super(EGNN, self).__init__()
+        self.gcn_layer1 =  GraphConvolution(in_features=3, out_features=64)
+        self.gcn_layer2 =  GraphConvolution(in_features=64, out_features=128)
         self.hidden_nf = hidden_nf
         self.device = device
         self.n_layers = n_layers
@@ -300,6 +303,8 @@ class EGNN(nn.Module):
         self.to(self.device)
 
     def forward(self, h, x, edges, edge_attr):
+        x = self.gcn_layer1(adj, x)
+
         h = self.embedding_in(h)
         for i in range(0, self.n_layers):
             h, x, _ = self._modules["gcl_%d" % i](h, edges, x, edge_attr=edge_attr)
@@ -397,8 +402,6 @@ if __name__ == "__main__":
     test_interval = 50
     max_training_samples = 1024
 
-    dataset = "TUMRGBD"
-    out_dir = "/home/eavise3d/Downloads/match/output"
     exp_name = ""
     # Dummy variables h, x and fully connected edges
     h = torch.ones(batch_size *  n_nodes, n_feat)
@@ -423,18 +426,19 @@ if __name__ == "__main__":
 
 
 
-    if model == 'egnn':
-        egnn = EGNN(in_node_nf=n_feat, hidden_nf=32, out_node_nf=1, in_edge_nf=1)
-        print(egnn)
+    # if model == 'egnn':
+    #     egnn = EGNN(in_node_nf=n_feat, hidden_nf=32, out_node_nf=1, in_edge_nf=1)
+    #     print(egnn)
 
-    # elif model == 'se3_transformer':
-    #     tfn = SE3Transformer(n_particles=5, n_dimesnion=3, nf=int(nf/degree), n_layers=n_layers, model=model, num_degrees=degree, div=1)
-    #     if torch.cuda.is_available():
-    #         tfn = tfn.cuda()
-    else:
-        raise Exception("Wrong model specified")
+    # # elif model == 'se3_transformer':
+    # #     tfn = SE3Transformer(n_particles=5, n_dimesnion=3, nf=int(nf/degree), n_layers=n_layers, model=model, num_degrees=degree, div=1)
+    # #     if torch.cuda.is_available():
+    # #         tfn = tfn.cuda()
+    # else:
+    #     raise Exception("Wrong model specified")
 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    # optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
 
     # results = {'epochs': [], 'losess': []}
     # best_val_loss = 1e8
