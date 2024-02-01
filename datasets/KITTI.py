@@ -7,7 +7,7 @@ class KITTIDataset(data.Dataset):
     def __init__(self,
                 root,
                 split='train',
-                # descriptor='fcgf',
+                descriptor='fcgf',
                 in_dim=6,
                 inlier_threshold=0.60,
                 num_node=5000,
@@ -19,8 +19,8 @@ class KITTIDataset(data.Dataset):
                 ):
         self.root = root
         self.split = split
-        # self.descriptor = descriptor
-        # assert descriptor in ['fcgf', 'fpfh']
+        self.descriptor = descriptor
+        assert descriptor in ['fcgf', 'fpfh']
         self.in_dim = in_dim
         self.inlier_threshold = inlier_threshold
         self.num_node = num_node
@@ -114,18 +114,18 @@ class KITTIDataset(data.Dataset):
             corr_pos = corr_pos - corr_pos.mean(0)
         elif self.in_dim == 9:
             corr_pos = np.concatenate([input_src_keypts, input_tgt_keypts, input_src_keypts-input_tgt_keypts], axis=-1)
-        elif self.in_dim == 12:
-            src_pcd = make_point_cloud(src_keypts)
-            tgt_pcd = make_point_cloud(tgt_keypts)
-            estimate_normal(src_pcd, radius=self.downsample*2)
-            estimate_normal(tgt_pcd, radius=self.downsample*2)
-            src_normal = np.array(src_pcd.normals)
-            tgt_normal = np.array(tgt_pcd.normals)
-            src_normal = src_normal[src_sel_ind, :]
-            tgt_normal = tgt_normal[tgt_sel_ind, :]
-            input_src_normal = src_normal[corr[:, 0]]
-            input_tgt_normal = tgt_normal[corr[:, 1]]
-            corr_pos = np.concatenate([input_src_keypts, input_src_normal, input_tgt_keypts, input_tgt_normal], axis=-1)
+        # elif self.in_dim == 12:
+        #     src_pcd = make_point_cloud(src_keypts)
+        #     tgt_pcd = make_point_cloud(tgt_keypts)
+        #     estimate_normal(src_pcd, radius=self.downsample*2)
+        #     estimate_normal(tgt_pcd, radius=self.downsample*2)
+        #     src_normal = np.array(src_pcd.normals)
+        #     tgt_normal = np.array(tgt_pcd.normals)
+        #     src_normal = src_normal[src_sel_ind, :]
+        #     tgt_normal = tgt_normal[tgt_sel_ind, :]
+        #     input_src_normal = src_normal[corr[:, 0]]
+        #     input_tgt_normal = tgt_normal[corr[:, 1]]
+            corr_pos = np.concatenate([input_src_keypts, input_tgt_keypts], axis=-1)
 
         return corr_pos.astype(np.float32), \
             input_src_keypts.astype(np.float32), \

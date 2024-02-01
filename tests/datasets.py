@@ -14,7 +14,7 @@ from torchvision import transforms
 import api
 
 
-base_dir = '/home/eavise3d/Downloads/rgbd_dataset_freiburg1_xyz'
+base_dir = '/home/eavise3d/Downloads/3DMatch_Feature'
 
 filename = os.path.join(base_dir, 'result.pth')  #####data load, read in
 # data = {}
@@ -66,13 +66,13 @@ print(data['matches01']['scores'].shape)
 pair_idxs = data['matches01']['matches'].cuda()
 match_scores = data['matches01']['scores'].cuda()
 
-matched_src_frame_fea = src_frame_fea[pair_idxs[:, 0]].cuda()
-matched_src_frame_descriptor = src_frame_descriptor[pair_idxs[:, 0]].cuda()
-matched_src_frame_points_scores = src_frame_points_scores[pair_idxs[:, 0]].cuda() #torch.zeros_like(pair_idxs[:, 0])
+src_frame_fea = src_frame_fea[pair_idxs[:, 0]].cuda()
+rc_frame_descriptor = src_frame_descriptor[pair_idxs[:, 0]].cuda()
+src_frame_points_scores = src_frame_points_scores[pair_idxs[:, 0]].cuda() #torch.zeros_like(pair_idxs[:, 0])
 
-matched_tar_frame_fea = tar_frame_fea[pair_idxs[:, 1]].cuda() #torch.zeros_like(pair_idxs[:, 0])
-matched_tar_frame_descriptor = tar_frame_descriptor[pair_idxs[:, 1]].cuda() #torch.zeros_like(pair_idxs[:, 0])
-matched_tar_frame_points_scores = tar_frame_points_scores[pair_idxs[:, 1]].cuda() #torch.zeros_like(pair_idxs[:, 0])
+tar_frame_fea = tar_frame_fea[pair_idxs[:, 1]].cuda() #torch.zeros_like(pair_idxs[:, 0])
+tar_frame_descriptor = tar_frame_descriptor[pair_idxs[:, 1]].cuda() #torch.zeros_like(pair_idxs[:, 0])
+tar_frame_points_scores = tar_frame_points_scores[pair_idxs[:, 1]].cuda() #torch.zeros_like(pair_idxs[:, 0])
 
 
 print('&&&&&&&&&&')

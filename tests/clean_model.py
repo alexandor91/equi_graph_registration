@@ -3,7 +3,6 @@ import torch
 from torch import nn, Tensor
 import torch.optim as optim
 # from egnn_pytorch import EGNN
-# from se3_transformer_pytorch import SE3Transformer
 import egcnModel
 from gcnLayer import GraphConvolution, GlobalPooling
 #from se3_transformer_pytorch.se3_transformer_pytorch import SE3Transformer
@@ -28,8 +27,64 @@ from torch_geometric.transforms import BaseTransform
 from torch_geometric.transforms import SamplePoints, KNNGraph
 import torch_geometric.transforms as T
 from torch_cluster import knn_graph
+# from utils.SE3 import *
+import pickle
+import open3d as o3d
 
 torch.cuda.manual_seed(2)
+
+# class TransformationLoss(nn.Module):
+#     def __init__(self, re_thre=15, te_thre=30):
+#         super(TransformationLoss, self).__init__()
+#         self.re_thre = re_thre  # rotation error threshold (deg)
+#         self.te_thre = te_thre  # translation error threshold (cm)
+
+#     def forward(self, trans, gt_trans, src_keypts, tgt_keypts, probs):
+#         """
+#         Transformation Loss
+#         Inputs:
+#             - trans:      [bs, 4, 4] SE3 transformation matrices
+#             - gt_trans:   [bs, 4, 4] ground truth SE3 transformation matrices
+#             - src_keypts: [bs, num_corr, 3]
+#             - tgt_keypts: [bs, num_corr, 3]
+#             - probs:     [bs, num_corr] predicted inlier probability
+#         Outputs:
+#             - loss     transformation loss 
+#             - recall   registration recall (re < re_thre & te < te_thre)
+#             - RE       rotation error 
+#             - TE       translation error
+#             - RMSE     RMSE under the predicted transformation
+#         """
+#         bs = trans.shape[0]
+#         R, t = decompose_trans(trans)
+#         gt_R, gt_t = decompose_trans(gt_trans)
+
+#         recall = 0
+#         RE = torch.tensor(0.0).to(trans.device)
+#         TE = torch.tensor(0.0).to(trans.device)
+#         RMSE = torch.tensor(0.0).to(trans.device)
+#         loss = torch.tensor(0.0).to(trans.device)
+#         for i in range(bs):
+#             re = torch.acos(torch.clamp((torch.trace(R[i].T @ gt_R[i]) - 1) / 2.0, min=-1, max=1))
+#             te = torch.sqrt(torch.sum((t[i] - gt_t[i]) ** 2))
+#             warp_src_keypts = transform(src_keypts[i], trans[i])
+#             rmse = torch.norm(warp_src_keypts - tgt_keypts, dim=-1).mean()
+#             re = re * 180 / np.pi
+#             te = te * 100
+#             if te < self.te_thre and re < self.re_thre:
+#                 recall += 1
+#             RE += re
+#             TE += te
+#             RMSE += rmse
+
+#             pred_inliers = torch.where(probs[i] > 0)[0]
+#             if len(pred_inliers) < 1:
+#                 loss += torch.tensor(0.0).to(trans.device)
+#             else:
+#                 warp_src_keypts = transform(src_keypts[i], trans[i])
+#                 loss +=  ((warp_src_keypts - tgt_keypts)**2).sum(-1).mean()
+
+#         return loss / bs, recall * 100.0 / bs, RE / bs, TE / bs, RMSE / bs
 
 
 class PointNetLayer(MessagePassing):
@@ -94,6 +149,62 @@ class PointNet(torch.nn.Module):
         #h = global_max_pool(h, batch)  # [num_examples, hidden_channels]
         self.to(self.device)
         return h
+    
+class LoRALayer(torch.nn.Module):
+    def __init__(self, in_dim, out_dim, rank, alpha=1.0):
+        super().__init__()
+        std_dev = 1 / torch.sqrt(torch.tensor(rank).float())
+        self.A = torch.nn.Parameter(torch.randn(in_dim, rank) * std_dev)
+        self.B = torch.nn.Parameter(torch.zeros(rank, out_dim))
+        self.alpha = alpha
+
+    def forward(self, x):
+        print('$$$$lora hhhhhhh$$$$')
+        print(x.shape)
+        print(self.A.shape)
+        print(self.B.shape)
+        x = self.alpha * (x @ self.A @ self.B)
+        return x
+
+class crossAttentionRegression(torch.nn.Module):
+    def __init__(self, output_dim, eps=1e-6):
+        super().__init__()
+        self.output_dim = output_dim
+        self.eps = eps
+        self.max_pool = nn.AdaptiveMaxPool1d(output_size=1)
+        self.avg_pool = nn.AdaptiveAvgPool1d(output_size=1)
+        self.regression = None
+        self.head = None
+        # self.cos = torch.nn.CosineSimilarity(dim=1, eps=1e-6)        
+
+    def forward(self, src_tensor, tar_tensor, batch_size = 1):
+        # print('$$$$lora hhhhhhh$$$$')
+        # print(self.src_tensor.shape)
+        # print(self.tar_tensor.shape)
+        # attent_weghts = self.cos(src_tensor, tar_tensor)
+        """
+        added eps for numerical stability
+        """
+        a_n, b_n = src_tensor.norm(dim=1)[:, None], tar_tensor.norm(dim=1)[:, None]
+        a_norm = src_tensor / torch.clamp(a_n, min=self.eps)
+        b_norm = tar_tensor / torch.clamp(b_n, min=self.eps)
+        sim_mt = torch.mm(a_norm, b_norm.transpose(0, 1))
+        print("########attention weights")
+        print(sim_mt.shape)
+        print(b_norm.shape)
+        print(a_norm.shape)
+        proj_src = sim_mt @ b_norm
+        proj_tar = sim_mt.transpose(0, 1) @ a_norm
+
+        perm_proj_src = torch.permute(proj_src, (1, 0)) #########batch size not added
+        perm_proj_tar = torch.permute(proj_tar, (1, 0)) #########batch size not added
+        src0 = self.max_pool(perm_proj_src).view(batch_size, -1)
+        print(src0.shape)
+        src1 = self.avg_pool(perm_proj_tar).view(batch_size, -1)
+        x = torch.cat((src0, src1), dim=-1)
+
+        return sim_mt, proj_src, proj_tar
+
 
 class E_GCL(nn.Module):
     """
@@ -201,9 +312,8 @@ class E_GCL(nn.Module):
 
 
 class EGNN(nn.Module):
-    def __init__(self, in_node_nf, hidden_nf, out_node_nf, in_edge_nf=0, device='cuda:0', act_fn=nn.SiLU(), n_layers=1, residual=True, attention=False, normalize=False, tanh=False):
+    def __init__(self, in_node_nf, hidden_nf, out_node_nf, in_lora_dim, out_lora_dim, in_edge_nf=0, device='cuda:0', act_fn=nn.SiLU(), n_layers=1, residual=True, attention=False, normalize=False, tanh=False):
         '''
-
         :param in_node_nf: Number of features for 'h' at the input
         :param hidden_nf: Number of hidden features
         :param out_node_nf: Number of features for 'h' at the output
@@ -229,10 +339,14 @@ class EGNN(nn.Module):
         self.n_layers = n_layers
         self.embedding_in = nn.Linear(in_node_nf, self.hidden_nf)
         self.embedding_out = nn.Linear(self.hidden_nf, out_node_nf)
+        self.out_lora_dim = out_lora_dim
+        self.in_lora_dim = in_lora_dim
         for i in range(0, n_layers):
             self.add_module("gcl_%d" % i, E_GCL(self.hidden_nf, self.hidden_nf, self.hidden_nf, edges_in_d=in_edge_nf,
                                                 act_fn=act_fn, residual=residual, attention=attention,
                                                 normalize=normalize, tanh=tanh))
+        self.self_attention = None
+        self.LoRAlayer = LoRALayer(self.in_lora_dim, self.out_lora_dim, out_node_nf+3) ###in_node_nf 64 
 
     def forward(self, h, x, edges, edge_attr):
         # self.to(self.device)
@@ -240,7 +354,13 @@ class EGNN(nn.Module):
         for i in range(0, self.n_layers):
             h, x, _ = self._modules["gcl_%d" % i](h, edges, x, edge_attr=edge_attr)
         h = self.embedding_out(h)
-        return h, x
+        concat_feats = torch.cat([x, h], dim=1)
+        print('^^^^^')
+        print(x.shape)
+        print(h.shape)
+        print(concat_feats.shape)
+        loRA_feats = self.LoRAlayer(concat_feats)
+        return h, x, loRA_feats
 
 
 def unsorted_segment_sum(data, segment_ids, num_segments):
@@ -289,45 +409,76 @@ def get_edges_batch(n_nodes, batch_size):
 
 if __name__ == "__main__":
     dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    pos = torch.rand(2048, 3).to(dev)
-    edge = torch.randint(1, 10, (2, 768)).to(dev)
+    src_pos = torch.rand(2048, 3).to(dev)
+    src_edge = torch.randint(1, 10, (2, 768)).to(dev)
     batch = torch.tensor([1]).to(dev)
 
+    tar_pos = torch.rand(2048, 3).to(dev)
+    tar_edge = torch.randint(1, 10, (2, 768)).to(dev)
 #   dataset.transform = T.Compose([SamplePoints(num=256), KNNGraph(k=6)])
 
 #   data = dataset[0]
 #   y = [1, 3]
 #   Data(pos, edge_index=[2, 1536], y)
     k = 12
-    graph_idx = knn_graph(pos,k,loop=True)
-    index = torch.LongTensor([1, 0])
-    new_graph_idx = torch.zeros_like(graph_idx)
-    new_graph_idx[index] = graph_idx
-    ks_graph_coords = pos[new_graph_idx]
-    # edgegraph = KNNGraph(k=12) #RadiusGraph(r=0.05, loop = False, max_num_neighbors = 15, num_workers = 6)
-    print(graph_idx.shape)
-    print(pos.shape)
-    print(ks_graph_coords.shape)
-    # print(pos)
-    # print(new_graph_idx)
-    # print(ks_graph)
-    feature_encoder = PointNet().to(dev)
-    feats = feature_encoder(pos, edge, batch).to(dev)
+    src_graph_idx = knn_graph(src_pos,k,loop=False)
+    src_index = torch.LongTensor([1, 0]) #####swap index
+    src_new_graph_idx = torch.zeros_like(src_graph_idx)
+    src_new_graph_idx[src_index] = src_graph_idx
+    src_ks_graph_coords = src_pos[src_new_graph_idx]
+    # src_mask = torch.logical_xor(src_new_graph_idx[0,:], src_new_graph_idx[1,:]) 
 
-    print(feats.shape)
+
+    tar_graph_idx = knn_graph(tar_pos,k,loop=False)
+    tar_index = torch.LongTensor([1, 0]) #####swap index
+    tar_new_graph_idx = torch.zeros_like(tar_graph_idx)
+    tar_new_graph_idx[tar_index] = tar_graph_idx
+    tar_ks_graph_coords = src_pos[tar_new_graph_idx]
+    # src_mask = torch.logical_xor(src_new_graph_idx[0,:], src_new_graph_idx[1,:]) 
+
+
+    # edgegraph = KNNGraph(k=12) #RadiusGraph(r=0.05, loop = False, max_num_neighbors = 15, num_workers = 6)
+    print(src_graph_idx.shape)
+    print(src_pos.shape)
+    print(src_ks_graph_coords.shape)
+    # print(pos)
+    # print(ks_graph)
+    feature_encoder1 = PointNet().to(dev)
+    feats1 = feature_encoder1(src_pos, src_edge, batch).to(dev)
+
+    print(feats1.shape)
     # Dummy parameters
-    n_nodes = torch.tensor([pos.shape[0]]).to(dev)
-    n_feat =  torch.tensor([feats.shape[1]]).to(dev)
-    x_dim = torch.tensor([pos.shape[1]]).to(dev)
+    n_nodes1 = torch.tensor([src_pos.shape[0]]).to(dev)
+    n_feat1 =  torch.tensor([feats1.shape[1]]).to(dev)
+    x_dim1 = torch.tensor([src_pos.shape[1]]).to(dev)
+
+    n_nodes2 = torch.tensor([src_pos.shape[0]]).to(dev)
+    n_feat2 =  torch.tensor([feats1.shape[1]]).to(dev)
+    x_dim2 = torch.tensor([src_pos.shape[1]]).to(dev)
 
     # Dummy variables h, x and fully connected edges
-    h = torch.ones(batch * n_nodes, n_feat).to(dev)
-    x = torch.ones(batch * n_nodes, x_dim).to(dev)
-    edges, edge_attr = get_edges_batch(n_nodes, batch)
+    h1 = torch.ones(batch * n_nodes1, n_feat1).to(dev)
+    x1 = torch.ones(batch * n_nodes1, x_dim1).to(dev)
+    edges1, edge_attr1 = get_edges_batch(n_nodes1, batch)
 
-    # Initialize EGNN
-    egnn = EGNN(in_node_nf=n_feat, hidden_nf=32, out_node_nf=1, in_edge_nf=1).cuda()
+    # Dummy variables h, x and fully connected edges
+    h2 = torch.ones(batch * n_nodes2, n_feat2).to(dev)
+    x2 = torch.ones(batch * n_nodes2, x_dim2).to(dev)
+    edges2, edge_attr2 = get_edges_batch(n_nodes2, batch)
 
-    # Run EGNN
-    h, x = egnn(h, x, edges, edge_attr)
+    print('^^^^^^^###########^^^^^^^^')
+    print(edge_attr1.shape)
+
+    # # Initialize EGNN
+    # egnn = EGNN(in_node_nf=n_feat1, hidden_nf=32, out_node_nf=1, in_lora_dim = src_pos.shape[1]+1, out_lora_dim = 6,in_edge_nf=1).cuda()
+
+    # # Run EGNN
+    # h1, x1, reduc_feats1 = egnn(h1, x1, edges1, edge_attr1)
+    # h2, x2, reduc_feats2 = egnn(h2, x2, edges2, edge_attr2)
+
+    # print('#######h1  x1#######')
+    # print(h1)
+    # print(x1)
+    # cos = crossAttentionRegression(output_dim=4, eps=1e-6)
+    # output, _, _ = cos(reduc_feats1, reduc_feats2, batch)
     # print(model)
