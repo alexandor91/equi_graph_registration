@@ -24,12 +24,13 @@ from torch_geometric.transforms import SamplePoints, KNNGraph
 import torch_geometric.transforms as T
 from torch_cluster import knn_graph
 
-import os, errno, time
+import os, errno, time, sys
 import numpy as np
 import wandb
 import json
 from tensorboardX import SummaryWriter
 #from ...utils import *
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from tools.timer import Timer, AverageMeter
 from tqdm import tqdm
 
@@ -52,8 +53,8 @@ class Trainer(object):
         self.scheduler_interval = args.scheduler_interval
         self.snapshot_interval = args.snapshot_interval
         self.evaluate_interval = args.evaluate_interval
-        self.evaluate_metric = args.evaluate_metric
-        self.metric_weight = args.metric_weight
+        # self.evaluate_metric = args.evaluate_metric
+        # self.metric_weight = args.metric_weight
         self.transformation_loss_start_epoch = args.transformation_loss_start_epoch
         # self.writer = SummaryWriter(log_dir=args.tboard_dir)
 
@@ -73,13 +74,13 @@ class Trainer(object):
 
         self.model.train()
         res = self.evaluate(0)
-        print(f'Evaluation: Epoch 0: SM Loss {res["sm_loss"]:.2f} Class Loss {res["class_loss"]:.2f} Trans Loss {res["trans_loss"]:.2f} Recall {res["reg_recall"]:.2f}')
+        print(f'Evaluation: Epoch 0: Trans Loss {res["trans_loss"]:.2f} Recall {res["reg_recall"]:.2f}')
         for epoch in range(self.max_epoch):
             self.train_epoch(epoch + 1)  # start from epoch 1
 
             if (epoch + 1) % self.evaluate_interval == 0 or epoch == 0:
                 res = self.evaluate(epoch + 1)
-                print(f'Evaluation: Epoch {epoch+1}: SM Loss {res["sm_loss"]:.2f} Class Loss {res["class_loss"]:.2f} Trans Loss {res["trans_loss"]:.2f} Recall {res["reg_recall"]:.2f}')
+                print(f'Evaluation: Epoch {epoch+1}: Trans Loss {res["trans_loss"]:.2f} Recall {res["reg_recall"]:.2f}')
                 if res['reg_recall'] > best_reg_recall:
                     best_reg_recall = res['reg_recall']
                     self._snapshot('best')
@@ -252,7 +253,7 @@ class Trainer(object):
         print(f"Save model to {self.save_dir}/model_{epoch}.pkl")
 
     def _load_pretrain(self, pretrain):
-        state_dict = torch.load(pretrain, map_location='cpu')
+        state_dict = torch.load(pretrain, map_location='gpu')
         self.model.load_state_dict(state_dict)
         print(f"Load model from {pretrain}.pkl")
 

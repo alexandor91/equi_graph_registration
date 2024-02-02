@@ -29,7 +29,7 @@ import torch_geometric.transforms as T
 from torch_cluster import knn_graph
 # from utils.SE3 import *
 import pickle
-import open3d as o3d
+# import open3d as o3d
 
 torch.cuda.manual_seed(2)
 
