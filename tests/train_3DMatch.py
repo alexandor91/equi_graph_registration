@@ -4,11 +4,11 @@ import shutil
 import json 
 from config import get_config
 from easydict import EasyDict as edict
-from libs.loss import TransformationLoss, ClassificationLoss, SpectralMatchingLoss
+from clean_model import TransformationLoss
 from datasets.ThreeDMatch import ThreeDMatchTrainVal
 from datasets.dataloader import get_dataloader
-from libs.trainer import Trainer
-from models.PointDSC import PointDSC
+from trainer import Trainer
+from clean_model import EGNN
 from torch import optim
 
 
@@ -21,11 +21,9 @@ if __name__ == '__main__':
     os.makedirs(config.snapshot_dir, exist_ok=True)
     os.makedirs(config.tboard_dir, exist_ok=True)
     os.makedirs(config.save_dir, exist_ok=True)
-    shutil.copy2(os.path.join('.', 'train_3DMatch.py'), os.path.join(config.snapshot_dir, 'train.py'))
-    shutil.copy2(os.path.join('.', 'libs/trainer.py'), os.path.join(config.snapshot_dir, 'trainer.py'))
-    shutil.copy2(os.path.join('.', 'models/PointDSC.py'), os.path.join(config.snapshot_dir, 'model.py'))  # for the model setting.
-    shutil.copy2(os.path.join('.', 'libs/loss.py'), os.path.join(config.snapshot_dir, 'loss.py'))
-    shutil.copy2(os.path.join('.', 'datasets/ThreeDMatch.py'), os.path.join(config.snapshot_dir, 'dataset.py'))
+    shutil.copy2(os.path.join('.', 'train_KITTI.py'), os.path.join(config.snapshot_dir, 'train.py'))
+    shutil.copy2(os.path.join('.', 'trainer.py'), os.path.join(config.snapshot_dir, 'trainer.py'))
+    shutil.copy2(os.path.join('.', 'datasets/KITTI.py'), os.path.join(config.snapshot_dir, 'dataset.py'))
     json.dump(
         config,
         open(os.path.join(config.snapshot_dir, 'config.json'), 'w'),
@@ -33,16 +31,15 @@ if __name__ == '__main__':
     )
 
     # create model 
-    config.model = PointDSC(
-        in_dim=config.in_dim,
-        num_layers=config.num_layers, 
-        num_channels=config.num_channels,
-        num_iterations=config.num_iterations,
-        inlier_threshold=config.inlier_threshold,
-        sigma_d=config.sigma_d,
-        ratio=config.ratio,
-        k=config.k,
-    )
+    config.model = EGNN(r=(32+3),
+                        in_node_nf=32, 
+                        hidden_nf=32,
+                        out_node_nf=1, 
+                        in_lora_dim = 1024,
+                        out_lora_dim = 128,
+                        knn_count=16,
+                        in_edge_nf=3).cuda()
+
 
     # create optimizer 
     if config.optimizer == 'SGD':
@@ -101,13 +98,13 @@ if __name__ == '__main__':
     
     # create evaluation
     config.evaluate_metric = {
-        "ClassificationLoss": ClassificationLoss(balanced=config.balanced),
-        "SpectralMatchingLoss": SpectralMatchingLoss(balanced=config.balanced),
+        # "ClassificationLoss": ClassificationLoss(balanced=config.balanced),
+        # "SpectralMatchingLoss": SpectralMatchingLoss(balanced=config.balanced),
         "TransformationLoss": TransformationLoss(re_thre=config.re_thre, te_thre=config.te_thre),
     }
     config.metric_weight = {
-        "ClassificationLoss": config.weight_classification,
-        "SpectralMatchingLoss": config.weight_spectralmatching,
+        # "ClassificationLoss": config.weight_classification,
+        # "SpectralMatchingLoss": config.weight_spectralmatching,
         "TransformationLoss": config.weight_transformation,
     }
 

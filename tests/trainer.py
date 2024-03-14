@@ -96,7 +96,7 @@ class Trainer(object):
 
     def train_epoch(self, epoch):
         # create meters and timers
-        meter_list = ['class_loss', 'trans_loss', 'sm_loss', 'reg_recall', 're', 'te', 'precision', 'recall', 'f1']
+        meter_list = ['trans_loss', 'reg_recall', 're', 'te']
         meter_dict = {}
         for key in meter_list:
             meter_dict[key] = AverageMeter()
@@ -107,10 +107,10 @@ class Trainer(object):
         trainer_loader_iter = self.train_loader.__iter__()
         for iter in range(num_iter):
             data_timer.tic()
-            (corr_pos, src_keypts, tgt_keypts, gt_trans, gt_labels) = trainer_loader_iter.next()
+            (src_keypts, tgt_keypts, gt_trans) = trainer_loader_iter.next()
             if self.gpu_mode:
-                corr_pos, src_keypts, tgt_keypts, gt_trans, gt_labels = \
-                    corr_pos.cuda(), src_keypts.cuda(), tgt_keypts.cuda(), gt_trans.cuda(), gt_labels.cuda()
+                src_keypts, tgt_keypts, gt_trans = \
+                    src_keypts.cuda(), tgt_keypts.cuda(), gt_trans.cuda()
             data = {
                 'src_keypts': src_keypts,
                 'tgt_keypts': tgt_keypts,
@@ -121,28 +121,27 @@ class Trainer(object):
             # forward
             self.optimizer.zero_grad()
             res = self.model(data)
-            pred_trans, pred_labels = res['final_trans'], res['final_labels']
+            pred_trans = res['final_trans']
             # classification loss
-            class_stats = self.evaluate_metric['ClassificationLoss'](pred_labels, gt_labels)
-            class_loss = class_stats['loss']
+            # class_stats = self.evaluate_metric['ClassificationLoss'](pred_labels, gt_labels)
+            # class_loss = class_stats['loss']
             # spectral matching loss
-            sm_loss = self.evaluate_metric['SpectralMatchingLoss'](res['M'], gt_labels)
+            # sm_loss = self.evaluate_metric['SpectralMatchingLoss'](res['M'], gt_labels)
             # transformation loss
-            trans_loss, reg_recall, re, te, rmse = self.evaluate_metric['TransformationLoss'](pred_trans, gt_trans, src_keypts, tgt_keypts, pred_labels)
+            trans_loss, reg_recall, re, te, rmse = self.evaluate_metric['TransformationLoss'](pred_trans, gt_trans, src_keypts, tgt_keypts)
 
-            loss = self.metric_weight['ClassificationLoss'] * class_loss
+            # loss = self.metric_weight['ClassificationLoss'] * class_loss
             if epoch > self.transformation_loss_start_epoch and self.metric_weight['TransformationLoss'] > 0.0:
                 loss += self.metric_weight['TransformationLoss'] * trans_loss
             
             stats = {
-                'class_loss': float(class_loss),
                 'trans_loss': float(trans_loss),
                 'reg_recall': float(reg_recall),
                 're': float(re),
                 'te': float(te),
-                'precision': class_stats['precision'],
-                'recall': class_stats['recall'],
-                'f1': class_stats['f1'],
+                # 'precision': class_stats['precision'],
+                # 'recall': class_stats['recall'],
+                # 'f1': class_stats['f1'],
             }
 
             # backward
@@ -172,8 +171,6 @@ class Trainer(object):
                     self.writer.add_scalar(f"Train/{key}", meter_dict[key].avg, curr_iter)
 
                 print(f"Epoch: {epoch} [{iter+1:4d}/{num_iter}] "
-                      f"sm_loss: {meter_dict['sm_loss'].avg:.2f} "
-                      f"class_loss: {meter_dict['class_loss'].avg:.2f} "
                       f"trans_loss: {meter_dict['trans_loss'].avg:.2f} "
                       f"reg_recall: {meter_dict['reg_recall'].avg:.2f}% "
                       f"re: {meter_dict['re'].avg:.2f}degree "
@@ -186,7 +183,7 @@ class Trainer(object):
         self.model.eval()
 
         # create meters and timers
-        meter_list = ['class_loss', 'trans_loss', 'sm_loss', 'reg_recall', 're', 'te', 'precision', 'recall', 'f1']
+        meter_list = ['trans_loss', 'reg_recall', 're', 'te']
         meter_dict = {}
         for key in meter_list:
             meter_dict[key] = AverageMeter()
@@ -197,12 +194,11 @@ class Trainer(object):
         val_loader_iter = self.val_loader.__iter__()
         for iter in range(num_iter):
             data_timer.tic()
-            (corr_pos, src_keypts, tgt_keypts, gt_trans, gt_labels) = val_loader_iter.next()
+            (src_keypts, tgt_keypts, gt_trans) = val_loader_iter.next()
             if self.gpu_mode:
-                corr_pos, src_keypts, tgt_keypts, gt_trans, gt_labels = \
-                    corr_pos.cuda(), src_keypts.cuda(), tgt_keypts.cuda(), gt_trans.cuda(), gt_labels.cuda()
+                src_keypts, tgt_keypts, gt_trans = \
+                    src_keypts.cuda(), tgt_keypts.cuda(), gt_trans.cuda()
             data = {
-                'corr_pos': corr_pos,
                 'src_keypts': src_keypts,
                 'tgt_keypts': tgt_keypts,
             }
@@ -211,14 +207,14 @@ class Trainer(object):
             model_timer.tic()
             # forward
             res = self.model(data)
-            pred_trans, pred_labels = res['final_trans'], res['final_labels']
+            pred_trans = res['final_trans'] #### res['final_labels']
             # classification loss
-            class_stats = self.evaluate_metric['ClassificationLoss'](pred_labels, gt_labels)
-            class_loss = class_stats['loss']
+            # class_stats = self.evaluate_metric['ClassificationLoss'](pred_labels, gt_labels)
+            # class_loss = class_stats['loss']
             # spectral matching loss
-            sm_loss = self.evaluate_metric['SpectralMatchingLoss'](res['M'], gt_labels)
+            # sm_loss = self.evaluate_metric['SpectralMatchingLoss'](res['M'], gt_labels)
             # transformation loss
-            trans_loss, reg_recall, re, te, rmse = self.evaluate_metric['TransformationLoss'](pred_trans, gt_trans, src_keypts, tgt_keypts, pred_labels)
+            trans_loss, reg_recall, re, te, rmse = self.evaluate_metric['TransformationLoss'](pred_trans, gt_trans, src_keypts, tgt_keypts)
             model_timer.toc()
 
             stats = {
@@ -228,9 +224,9 @@ class Trainer(object):
                 'reg_recall': float(reg_recall),
                 're': float(re),
                 'te': float(re),
-                'precision': class_stats['precision'],
-                'recall': class_stats['recall'],
-                'f1': class_stats['f1'],
+                # 'precision': class_stats['precision'],
+                # 'recall': class_stats['recall'],
+                # 'f1': class_stats['f1'],
             }
             for key in meter_list:
                 if not np.isnan(stats[key]):
@@ -238,8 +234,8 @@ class Trainer(object):
 
         self.model.train()
         res = {
-            'sm_loss': meter_dict['sm_loss'].avg,
-            'class_loss': meter_dict['class_loss'].avg,
+            # 'sm_loss': meter_dict['sm_loss'].avg,
+            # 'class_loss': meter_dict['class_loss'].avg,
             'reg_recall': meter_dict['reg_recall'].avg,
             'trans_loss': meter_dict['trans_loss'].avg,
         }

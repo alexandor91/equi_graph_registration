@@ -1,7 +1,10 @@
 import os
 import torch.utils.data as data
-from utils.pointcloud import make_point_cloud, estimate_normal
-from utils.SE3 import *
+from tools.pointcloud import make_point_cloud, estimate_normal
+from tools.SE3 import *
+import numpy as np
+import pickle5 as pickle
+
 
 class KITTIDataset(data.Dataset):
     def __init__(self,
@@ -20,7 +23,7 @@ class KITTIDataset(data.Dataset):
         self.root = root
         self.split = split
         self.descriptor = descriptor
-        assert descriptor in ['fcgf', 'fpfh']
+        assert descriptor in ['fcgf', 'fpfh', 'ours']
         self.in_dim = in_dim
         self.inlier_threshold = inlier_threshold
         self.num_node = num_node
@@ -41,7 +44,9 @@ class KITTIDataset(data.Dataset):
     def __getitem__(self, index):
         # load meta data
         filename = self.ids_list[index]
-        data = np.load(filename)
+        file = open(filename,'r')
+        object_file = pickle.load(file)
+        data = np.load(object_file)
         src_keypts = data['xyz0']
         tgt_keypts = data['xyz1']
         src_features = data['features0']
@@ -67,53 +72,67 @@ class KITTIDataset(data.Dataset):
         N_tgt = tgt_features.shape[0]
         src_sel_ind = np.arange(N_src)
         tgt_sel_ind = np.arange(N_tgt)
-        if self.num_node != 'all' and N_src > self.num_node:
-            src_sel_ind = np.random.choice(N_src, self.num_node, replace=False)
-        if self.num_node != 'all' and N_tgt > self.num_node:
-            tgt_sel_ind = np.random.choice(N_tgt, self.num_node, replace=False)
+        # if self.num_node != 'all' and N_src > self.num_node:
+        #     src_sel_ind = np.random.choice(N_src, self.num_node, replace=False)
+        # if self.num_node != 'all' and N_tgt > self.num_node:
+        #     tgt_sel_ind = np.random.choice(N_tgt, self.num_node, replace=False)
         src_desc = src_features[src_sel_ind, :]
         tgt_desc = tgt_features[tgt_sel_ind, :]
         src_keypts = src_keypts[src_sel_ind, :]
         tgt_keypts = tgt_keypts[tgt_sel_ind, :]
 
-        # construct the correspondence set by mutual nn in feature space.
-        distance = np.sqrt(2 - 2 * (src_desc @ tgt_desc.T) + 1e-6)
-        source_idx = np.argmin(distance, axis=1)
-        if self.use_mutual:
-            target_idx = np.argmin(distance, axis=0)
-            mutual_nearest = (target_idx[source_idx] == np.arange(source_idx.shape[0]))
-            corr = np.concatenate([np.where(mutual_nearest == 1)[0][:,None], source_idx[mutual_nearest][:,None]], axis=-1)
-        else:
-            corr = np.concatenate([np.arange(source_idx.shape[0])[:, None], source_idx[:, None]], axis=-1)
+        # # construct the correspondence set by mutual nn in feature space.
+        # distance = np.sqrt(2 - 2 * (src_desc @ tgt_desc.T) + 1e-6)
+        # source_idx = np.argmin(distance, axis=1)
+        # if self.use_mutual:
+        #     target_idx = np.argmin(distance, axis=0)
+        #     mutual_nearest = (target_idx[source_idx] == np.arange(source_idx.shape[0]))
+        #     corr = np.concatenate([np.where(mutual_nearest == 1)[0][:,None], source_idx[mutual_nearest][:,None]], axis=-1)
+        # else:
+        #     corr = np.concatenate([np.arange(source_idx.shape[0])[:, None], source_idx[:, None]], axis=-1)
 
         # compute the ground truth label
-        frag1 = src_keypts[corr[:, 0]]
-        frag2 = tgt_keypts[corr[:, 1]]
-        frag1_warp = transform(frag1, gt_trans)
-        distance = np.sqrt(np.sum(np.power(frag1_warp - frag2, 2), axis=1))
+        frag1 = src_keypts #[corr[:, 0]]
+        frag2 = tgt_keypts #[corr[:, 1]]
+
+        camera_center = np.tile([0, 0, -1], src_keypts.shape[0])
+            # Calculate the Euclidean distance between a point and a camera center
+        distances1 = np.array(np.linalg.norm(frag1 - camera_center))
+        distances2 = np.array(np.linalg.norm(frag2 - camera_center))
+
+
+        # Calculate distances from each point to its corresponding camera center        
+        # Sort points based on distances
+        sorted_indices1 = np.argsort(distances1)
+        ordered_points1 = frag1[sorted_indices1]
+
+        sorted_indices2 = np.argsort(distances2)
+        ordered_points2 = frag1[sorted_indices2]            
+        frag1_warp = transform(ordered_points1, gt_trans)
+        distance = np.sqrt(np.sum(np.power(frag1_warp - ordered_points2, 2), axis=1))
         labels = (distance < self.inlier_threshold).astype(np.int)
 
         # add random outlier to input data
-        if self.split == 'train' and np.mean(labels) > 0.5:
-            num_outliers = int(0.0 * len(corr))
-            src_outliers = np.random.randn(num_outliers, 3) * np.mean(src_keypts, axis=0)
-            tgt_outliers = np.random.randn(num_outliers, 3) * np.mean(tgt_keypts, axis=0)
-            input_src_keypts = np.concatenate( [src_keypts[corr[:, 0]], src_outliers], axis=0)
-            input_tgt_keypts = np.concatenate( [tgt_keypts[corr[:, 1]], tgt_outliers], axis=0)
-            labels = np.concatenate( [labels, np.zeros(num_outliers)], axis=0)
-        else:
-            # prepare input to the network
-            input_src_keypts = src_keypts[corr[:, 0]]
-            input_tgt_keypts = tgt_keypts[corr[:, 1]]
+        # if self.split == 'train' and np.mean(labels) > 0.5:
+        #     num_outliers = int(0.0 * len(corr))
+        #     src_outliers = np.random.randn(num_outliers, 3) * np.mean(src_keypts, axis=0)
+        #     tgt_outliers = np.random.randn(num_outliers, 3) * np.mean(tgt_keypts, axis=0)
+        #     input_src_keypts = np.concatenate( [src_keypts[corr[:, 0]], src_outliers], axis=0)
+        #     input_tgt_keypts = np.concatenate( [tgt_keypts[corr[:, 1]], tgt_outliers], axis=0)
+        #     labels = np.concatenate( [labels, np.zeros(num_outliers)], axis=0)
+        # else:
+        # prepare input to the network
+        input_src_keypts = src_keypts #[corr[:, 0]]
+        input_tgt_keypts = tgt_keypts  #[corr[:, 1]]
 
-        if self.in_dim == 3:
-            corr_pos = input_src_keypts - input_tgt_keypts
-        elif self.in_dim == 6:
-            corr_pos = np.concatenate([input_src_keypts, input_tgt_keypts], axis=-1)
-            # move the center of each point cloud to (0,0,0).
-            corr_pos = corr_pos - corr_pos.mean(0)
-        elif self.in_dim == 9:
-            corr_pos = np.concatenate([input_src_keypts, input_tgt_keypts, input_src_keypts-input_tgt_keypts], axis=-1)
+        # if self.in_dim == 3:
+        #     corr_pos = input_src_keypts - input_tgt_keypts
+        # elif self.in_dim == 6:
+        #     corr_pos = np.concatenate([input_src_keypts, input_tgt_keypts], axis=-1)
+        #     # move the center of each point cloud to (0,0,0).
+        #     corr_pos = corr_pos - corr_pos.mean(0)
+        # elif self.in_dim == 9:
+        #     corr_pos = np.concatenate([input_src_keypts, input_tgt_keypts, input_src_keypts-input_tgt_keypts], axis=-1)
         # elif self.in_dim == 12:
         #     src_pcd = make_point_cloud(src_keypts)
         #     tgt_pcd = make_point_cloud(tgt_keypts)
@@ -125,13 +144,12 @@ class KITTIDataset(data.Dataset):
         #     tgt_normal = tgt_normal[tgt_sel_ind, :]
         #     input_src_normal = src_normal[corr[:, 0]]
         #     input_tgt_normal = tgt_normal[corr[:, 1]]
-            corr_pos = np.concatenate([input_src_keypts, input_tgt_keypts], axis=-1)
+            # corr_pos = np.concatenate([input_src_keypts, input_tgt_keypts], axis=-1)
 
-        return corr_pos.astype(np.float32), \
-            input_src_keypts.astype(np.float32), \
+        return input_src_keypts.astype(np.float32), \
             input_tgt_keypts.astype(np.float32), \
-            gt_trans.astype(np.float32), \
-            labels.astype(np.float32),
+            gt_trans.astype(np.float32)
+            # labels.astype(np.float32),  \ #corr_pos.astype(np.float32)
 
     def __len__(self):
         return len(self.ids_list)
@@ -140,7 +158,7 @@ if __name__ == "__main__":
     dset = KITTIDataset(
                     root='/data/KITTI/',
                     split='test',
-                    descriptor='fcgf',
+                    descriptor='ours',
                     num_node=5000,
                     use_mutual=False,
                     augment_axis=0,
